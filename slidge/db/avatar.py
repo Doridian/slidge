@@ -64,8 +64,15 @@ class AvatarCache:
     store: AvatarStore
     legacy_avatar_type: Callable[[str], Any] = str
 
+    _legacy_id_avatar_dict: dict[LegacyFileIdType, CachedAvatar]
+    _url_avatar_dict: dict[URL, CachedAvatar]
+    _pk_avatar_dict: dict[int, CachedAvatar]
+
     def __init__(self):
         self._thread_pool = ThreadPoolExecutor(config.AVATAR_RESAMPLING_THREADS)
+        self._legacy_id_avatar_dict = {}
+        self._url_avatar_dict = {}
+        self._pk_avatar_dict = {}
 
     def set_dir(self, path: Path):
         self.dir = path
@@ -74,6 +81,7 @@ class AvatarCache:
             for stored in self.store.get_all():
                 avatar = CachedAvatar.from_store(stored, root_dir=path)
                 if avatar.path.exists():
+                    self.__enter_to_cache(stored)
                     continue
                 log.warning(
                     "Removing avatar %s from store because %s does not exist",
@@ -84,6 +92,11 @@ class AvatarCache:
 
     def close(self):
         self._thread_pool.shutdown(cancel_futures=True)
+
+    def __enter_to_cache(self, avatar: Avatar) -> None:
+        self._legacy_id_avatar_dict[avatar.legacy_id] = avatar
+        self._url_avatar_dict[avatar.url] = avatar
+        self._pk_avatar_dict[avatar.id] = avatar
 
     def __get_http_headers(self, cached: Optional[CachedAvatar | Avatar]):
         headers = {}
@@ -121,16 +134,25 @@ class AvatarCache:
 
     def get(self, unique_id: LegacyFileIdType | URL) -> Optional[CachedAvatar]:
         if isinstance(unique_id, URL):
-            stored = self.store.get_by_url(unique_id)
+            stored = self._url_avatar_dict.get(unique_id)
+            if stored is None:
+                stored = self.store.get_by_url(unique_id)
+                self.__enter_to_cache(stored)
         else:
-            stored = self.store.get_by_legacy_id(str(unique_id))
+            stored = self._legacy_id_avatar_dict.get(unique_id)
+            if stored is None:
+                stored = self.store.get_by_legacy_id(str(unique_id))
+                self.__enter_to_cache(stored)
         if stored is None:
             return None
         return CachedAvatar.from_store(stored, self.dir)
 
     def get_by_pk(self, pk: int) -> CachedAvatar:
-        stored = self.store.get_by_pk(pk)
-        assert stored is not None
+        stored = self._pk_avatar_dict.get(pk)
+        if stored is None:
+            stored = self.store.get_by_pk(pk)
+            assert stored is not None
+            self.__enter_to_cache(stored)
         return CachedAvatar.from_store(stored, self.dir)
 
     @staticmethod
