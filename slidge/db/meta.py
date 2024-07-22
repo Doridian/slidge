@@ -61,5 +61,5 @@ class Base(sa.orm.DeclarativeBase):
 
 
 def get_engine(path: str) -> sa.Engine:
-    engine = sa.create_engine(path)
+    engine = sa.create_engine(path, echo=True)
     return engine
